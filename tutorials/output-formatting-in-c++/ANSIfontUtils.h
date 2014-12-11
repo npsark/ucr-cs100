@@ -108,3 +108,4 @@ string mkBold(string in){
 void resetTerminalColors(){
 	cout << reset;
 }
+
