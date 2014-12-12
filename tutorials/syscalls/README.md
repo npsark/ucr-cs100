@@ -2,7 +2,7 @@
 
 Here, we will present a list of functions that will be useful when programming your own shell.  These functions are called system calls, and they differ from regular functions because a syscall requests a specific service from the operating system’s kernel. 
 
-What’s really cool about syscalls are its error checking capabilities. Each syscall has access to a universal variable `errno`, `include <errno.h>` is required to use this variable, that it set to indicate what error has occured. The return value of each syscall can be furthered combined with other functions to make error checking much easier, which can save many headaches in the long run.
+What’s really cool about syscalls are its error checking capabilities. Each syscall has access to a universal variable `errno`, `include <errno.h>` is required to use this variable, that is set to indicate what error has occured. The return value of each syscall can be furthered combined with other functions to make error checking much easier, which can save many headaches in the long run.
 
 Syscalls might seem confusing to use but we’ll try our best to explain some of them in this list! If you want any more information we've included a link to the man page for each syscall.
 
@@ -231,7 +231,7 @@ Here we can see both `dup` and `dup2` being used.
 
 `pipe` is another syscall that is harder to understand, so PLEASE utilize outside resources if need be!
    
-`pipe` essentially creates an imaginary file that you can write to and read from. The parameter is an int array with two elements, which are the file descriptors for the imaginary file. In the example bewlow, `fd[0]` is the read end of the pipe and `fd[1]` is the write end of the pipe. Let me be clear, however, that pipe ignores the input and only uses the write end as output to whatever it is piping to. 
+`pipe` essentially creates an imaginary file that you can write to and read from. The parameter is an int array with two elements, which are the file descriptors for the imaginary file. In the example below, `fd[0]` is the read end of the pipe and `fd[1]` is the write end of the pipe. Let me be clear, however, that pipe ignores the input and only uses the write end as output to whatever it is piping to. 
 
 This function is essential when implementing piping in a bash shell. Piping is moving the stdout of the left side of the pipe into the stdin of whatever program is on the right side of the pipe. For example, you have an executable `names` which outputs a list of names in a random order you can pipe this into `sort` which will sort it alphabetically. This command would look like: `names | sort`. The end result would be the contents of the name executable output to the screen, except sorted. 
    
@@ -239,6 +239,8 @@ Now that we’ve gone over the basics of what piping is we can talk about how to
  
 Here’s an example of `pipe` in action:
 ```
+const int PIPE_READ = 0;
+const int PIPE_WRITE = 1;
 int fd[2];
 if(pipe(fd) == -1)//call to pipe, it puts the read end and write end file descriptors in fd
    perror("There was an error with pipe(). ");
@@ -249,44 +251,63 @@ if(pid == -1)//fork’s return value for an error is -1
    perror("There was an error with fork(). ");
    exit(1);//there was an error with fork so exit the program and go back and fix it
 }
-else if(pid == 0)//when pid is 0 you are in the child process
+else if(pid == 0)//when pid is 0 you are in the first child process
 {
-   cout<<"This is the child process ";
+   cout<<"This is the first child process ";
 
    //write to the pipe
-   if(-1 == dup2(fd[1],1))//make stdout the write end of the pipe 
+   if(-1 == dup2(fd[PIPE_WRITE],1))//make stdout the write end of the pipe 
       perror("There was an error with dup2. ");
-   if(-1 == close(fd[0])//close the read end of the pipe because we're not doing anything with it right now
+   if(-1 == close(fd[PIPE_READ])//close the read end of the pipe because we're not doing anything with it right now
       perror("There was an error with close. ");
 
    if(-1 == execvp(argv[0], argv)) 
       perror("There was an error in execvp. ");
 
 
-   exit(1);  //when the child process finishes doing what we want it to, cout, we want to kill the child process so it doesn’t go on in the program so we exit
+   exit(1);  //prevents zombie process
 }
-//if pid is not 0 then we’re in the parent
-else if(pid > 0) //parent function
+//if pid is not 0 then we’re in the first parent
+else if(pid > 0) //first parent function
 {
    //read end of the pipe
    int savestdin;
    if(-1 == (savestdin = dup(0)))//need to restore later or infinite loop
       perror("There is an error with dup. ");
-   if(-1 == dup2(fd[0],0))//make stdin the read end of the pipe 
-      perror("There was an error with dup2. ");
-    if(-1 == close(fd[1])//close the write end of the pipe because we're not doing anything with it right now
-      perror("There was an error with close. ");
    if( -1 == wait(0)) //wait for the child process to finish executing
-      perror(“There was an error with wait().);
+      perror(“There was an error with wait(). ");
+   
+   int pid2 = fork();
+   if(pid2 == -1)//fork's return value for an error is -1
+   {
+      perror("There was an error with fork(). ");
+      exit(1);//there was an error with fork so exit the program and go back and fix it 
+   }
+   else if(pid2 == 0)//when pid2 is 0 you are in the second child process
+   {
+      cout << "This is the second child process ";
 
-   //here you have to do another fork to execute the right side of the pipe command, as in the above example (“names | sort”) you would execute the sort command, we will leave this as an example for you to do.
+      if(-1 == dup2(fd[PIPE_READ],0))//make stdin the read end of the pipe 
+         perror("There was an error with dup2. ");
+      if(-1 == close(fd[PIPE_WRITE])//close the write end of the pipe because we're not doing anything with it right now
+         perror("There was an error with close. ");
 
+      if(-1 == execvp(argv2[0], argv2))
+         perror("There was an error in excecvp. ");
+
+      exit(1); //prevents zombie process
+   }
+   else if(pid2 > 0) //second parent function
+   {
+      if(-1 == wait(0)) //wait for the child process to finish executing
+         perror("There was an error with wait(). ");
+   }
 }
 if(-1 == dup2(savestdin,0))//restore stdin
    perror("There is an error with dup2. ");
 ```
 
-Here we see the full use of the `pipe` syscall. When we call `pipe` we have our `int fd[2]` as the parameter, `pipe` populates this array with the file descriptors of the read and write end of the imaginary file that is created. Then we `fork` the process, and in the child we change the stdout of whatever you are running to the write end of the imaginary file. In our example of `names|sort` the output of our names executable will be the input of our file. Then we go to our parent function and set the stdin to the read end of the `pipe`. We do this because we want the thing we wrote to the imaginary file to be the input to the right side of the pipe. In our example `names|sort` we want the names output to be the input of the sort program. After this we have to immediately call another `fork` function to execute the right side of the pipe. For this we have to call a function that is similar to the `exec` example, we will leave this as a workable example for you.
+Here we see the full use of the `pipe` syscall. When we call `pipe` we have our `int fd[2]` as the parameter, `pipe` populates this array with the file descriptors of the read and write end of the imaginary file that is created. Then we `fork` the process, and in the child we change the stdout of whatever you are running to the write end of the imaginary file. In our example of `names|sort` the output of our names executable will be the input of our file. Then we go to our parent function and set the stdin to the read end of the `pipe`. We do this because we want the thing we wrote to the imaginary file to be the input to the right side of the pipe. In our example `names|sort` we want the names output to be the input of the sort program. After this we have to immediately call another `fork` function to execute the right side of the pipe.
 
 ##getcwd:
 
